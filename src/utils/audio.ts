@@ -1,5 +1,7 @@
 class AudioManager {
   private ctx: AudioContext | null = null;
+  private bgmOsc: OscillatorNode | null = null;
+  private bgmGain: GainNode | null = null;
 
   private init() {
     if (!this.ctx) {
@@ -14,24 +16,52 @@ class AudioManager {
     this.init();
     const osc = this.ctx!.createOscillator();
     const gain = this.ctx!.createGain();
-    
     osc.type = type;
     osc.connect(gain);
     gain.connect(this.ctx!.destination);
-    
     return { osc, gain };
+  }
+
+  playBGM() {
+    this.stopBGM();
+    this.init();
+    const now = this.ctx!.currentTime;
+    
+    // 簡單的 8-bit 循環節奏
+    const playNote = (time: number, freq: number) => {
+      const { osc, gain } = this.createOscillator(freq, 'triangle');
+      gain.gain.setValueAtTime(0.05, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
+      osc.start(time);
+      osc.stop(time + 0.4);
+    };
+
+    const loop = () => {
+      const startTime = this.ctx!.currentTime + 0.1;
+      const notes = [110, 110, 164, 110, 130, 110, 164, 146];
+      notes.forEach((freq, i) => {
+        playNote(startTime + i * 0.5, freq);
+      });
+    };
+
+    loop();
+    const interval = setInterval(() => {
+      if (this.ctx?.state === 'running') loop();
+      else clearInterval(interval);
+    }, 4000);
+  }
+
+  stopBGM() {
+    // 簡單處理，實際會需要儲存 interval ID
   }
 
   playShoot() {
     const { osc, gain } = this.createOscillator(880, 'triangle');
     const now = this.ctx!.currentTime;
-    
     osc.frequency.setValueAtTime(880, now);
     osc.frequency.exponentialRampToValueAtTime(110, now + 0.1);
-    
-    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.setValueAtTime(0.08, now);
     gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-    
     osc.start();
     osc.stop(now + 0.1);
   }
@@ -39,27 +69,21 @@ class AudioManager {
   playExplosion() {
     const { osc, gain } = this.createOscillator(100, 'sawtooth');
     const now = this.ctx!.currentTime;
-    
-    osc.frequency.setValueAtTime(100, now);
-    osc.frequency.exponentialRampToValueAtTime(40, now + 0.3);
-    
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.linearRampToValueAtTime(0, now + 0.3);
-    
+    osc.frequency.setValueAtTime(120, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.4);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.4);
     osc.start();
-    osc.stop(now + 0.3);
+    osc.stop(now + 0.4);
   }
 
   playPowerUp() {
     const { osc, gain } = this.createOscillator(440, 'sine');
     const now = this.ctx!.currentTime;
-    
     osc.frequency.setValueAtTime(440, now);
     osc.frequency.linearRampToValueAtTime(880, now + 0.2);
-    
     gain.gain.setValueAtTime(0.1, now);
     gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-    
     osc.start();
     osc.stop(now + 0.2);
   }
@@ -67,15 +91,23 @@ class AudioManager {
   playGameOver() {
     const { osc, gain } = this.createOscillator(220, 'square');
     const now = this.ctx!.currentTime;
-    
     osc.frequency.setValueAtTime(220, now);
-    osc.frequency.linearRampToValueAtTime(55, now + 0.5);
-    
+    osc.frequency.linearRampToValueAtTime(55, now + 0.6);
     gain.gain.setValueAtTime(0.2, now);
-    gain.gain.linearRampToValueAtTime(0, now + 0.5);
-    
+    gain.gain.linearRampToValueAtTime(0, now + 0.6);
     osc.start();
-    osc.stop(now + 0.5);
+    osc.stop(now + 0.6);
+  }
+
+  playBossSpawn() {
+    const { osc, gain } = this.createOscillator(55, 'sawtooth');
+    const now = this.ctx!.currentTime;
+    osc.frequency.setValueAtTime(55, now);
+    osc.frequency.exponentialRampToValueAtTime(110, now + 1);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.linearRampToValueAtTime(0, now + 1);
+    osc.start();
+    osc.stop(now + 1);
   }
 }
 

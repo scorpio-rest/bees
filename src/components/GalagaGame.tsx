@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Trophy, Heart, Play, RotateCcw, Zap, Shield, PlusCircle } from 'lucide-react';
+import { Trophy, Heart, Play, RotateCcw, Zap, Shield, Skull } from 'lucide-react';
 import { audio } from '../utils/audio';
 
 // --- 常數與類型定義 ---
@@ -7,47 +7,72 @@ const CANVAS_WIDTH = 480;
 const CANVAS_HEIGHT = 640;
 const PLAYER_SIZE = 40;
 const ENEMY_SIZE = 30;
+const BOSS_SIZE = 120;
 const BULLET_SIZE = 4;
 const POWERUP_SIZE = 25;
 
 type PowerUpType = 'DOUBLE_SHOT' | 'SHIELD' | 'LIFE';
 
+// 像素定義 (8x8 矩陣)
+const PIXEL_DATA = {
+  PLAYER: [
+    [0,0,0,1,1,0,0,0],
+    [0,0,1,1,1,1,0,0],
+    [0,0,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,1,0,1,1,0,1,1],
+    [1,0,0,1,1,0,0,1],
+    [1,0,0,1,1,0,0,1]
+  ],
+  ENEMY_RED: [
+    [0,0,1,0,0,1,0,0],
+    [0,1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,0,1,1,1,1,0,1],
+    [1,1,1,1,1,1,1,1],
+    [0,0,1,0,0,1,0,0],
+    [0,1,0,1,1,0,1,0],
+    [1,0,1,0,0,1,0,1]
+  ],
+  ENEMY_PURPLE: [
+    [0,1,1,0,0,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,0,1,1,1,1,0,1],
+    [1,1,1,1,1,1,1,1],
+    [0,1,1,1,1,1,1,0],
+    [0,0,1,0,0,1,0,0],
+    [0,1,1,0,0,1,1,0],
+    [1,1,0,0,0,0,1,1]
+  ],
+  BOSS: [
+    [0,0,0,1,1,1,1,0,0,0],
+    [0,0,1,1,1,1,1,1,0,0],
+    [0,1,1,0,1,1,0,1,1,0],
+    [1,1,1,1,1,1,1,1,1,1],
+    [1,0,1,1,1,1,1,1,0,1],
+    [1,1,1,0,0,0,0,1,1,1],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,0,1,0,1,1,0,1,0,0]
+  ]
+};
+
 interface Entity {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  x: number; y: number; width: number; height: number;
 }
 
 interface Bullet extends Entity {
-  active: boolean;
-  fromPlayer: boolean;
+  active: boolean; fromPlayer: boolean; color: string; vx: number; vy: number;
 }
 
 interface Enemy extends Entity {
-  alive: boolean;
-  type: 'RED' | 'PURPLE' | 'YELLOW';
-  hp: number;
-  originX: number;
-  originY: number;
-  isDiving: boolean;
-  diveAngle: number;
-  scoreValue: number;
+  alive: boolean; type: 'RED' | 'PURPLE' | 'YELLOW' | 'BOSS';
+  hp: number; maxHp: number; originX: number; originY: number;
+  isDiving: boolean; diveAngle: number; scoreValue: number;
 }
 
-interface PowerUp extends Entity {
-  type: PowerUpType;
-  active: boolean;
-}
-
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  color: string;
-}
+interface PowerUp extends Entity { type: PowerUpType; active: boolean; }
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; }
 
 const GalagaGame: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -59,7 +84,6 @@ const GalagaGame: React.FC = () => {
   const [activePowerUp, setActivePowerUp] = useState<PowerUpType | null>(null);
   const [shieldActive, setShieldActive] = useState(false);
 
-  // 遊戲物件 Refs
   const playerRef = useRef({ x: CANVAS_WIDTH / 2 - PLAYER_SIZE / 2, y: CANVAS_HEIGHT - 60 });
   const bulletsRef = useRef<Bullet[]>([]);
   const enemiesRef = useRef<Enemy[]>([]);
@@ -71,14 +95,14 @@ const GalagaGame: React.FC = () => {
   const formationDir = useRef(1);
   const starsRef = useRef<{x: number, y: number, size: number, speed: number}[]>([]);
   const screenShake = useRef(0);
+  const bossActive = useRef(false);
 
-  // 初始化星空
   useEffect(() => {
-    starsRef.current = Array.from({ length: 100 }, () => ({
+    starsRef.current = Array.from({ length: 80 }, () => ({
       x: Math.random() * CANVAS_WIDTH,
       y: Math.random() * CANVAS_HEIGHT,
       size: Math.random() * 2,
-      speed: Math.random() * 2 + 1
+      speed: Math.random() * 3 + 1
     }));
   }, []);
 
@@ -104,65 +128,53 @@ const GalagaGame: React.FC = () => {
     setLevel(1);
     setActivePowerUp(null);
     setShieldActive(false);
+    bossActive.current = false;
     spawnEnemies(1);
     setGameState('PLAYING');
+    audio.playBGM();
   };
 
   const spawnEnemies = (lvl: number) => {
+    if (lvl % 5 === 0) {
+      spawnBoss();
+      return;
+    }
+    bossActive.current = false;
     const enemies: Enemy[] = [];
-    const rows = 4;
-    const cols = 8;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 8; c++) {
         let type: 'RED' | 'PURPLE' | 'YELLOW' = 'RED';
-        let hp = 1;
-        let scoreValue = 100;
-        
-        if (r === 0) { type = 'YELLOW'; hp = 2; scoreValue = 400; }
-        else if (r === 1) { type = 'PURPLE'; hp = 1; scoreValue = 200; }
-
+        if (r === 0) type = 'YELLOW';
+        else if (r === 1) type = 'PURPLE';
         enemies.push({
-          x: c * 45 + 70,
-          y: r * 40 + 80,
-          originX: c * 45 + 70,
-          originY: r * 40 + 80,
-          width: ENEMY_SIZE,
-          height: ENEMY_SIZE,
-          alive: true,
-          type,
-          hp,
-          isDiving: false,
-          diveAngle: 0,
-          scoreValue
+          x: c * 45 + 70, y: r * 40 + 80, originX: c * 45 + 70, originY: r * 40 + 80,
+          width: ENEMY_SIZE, height: ENEMY_SIZE, alive: true, type,
+          hp: r === 0 ? 2 : 1, maxHp: r === 0 ? 2 : 1, isDiving: false, diveAngle: 0, scoreValue: (3-r)*100
         });
       }
     }
     enemiesRef.current = enemies;
   };
 
-  const createParticles = (x: number, y: number, color: string) => {
-    for (let i = 0; i < 8; i++) {
-      particlesRef.current.push({
-        x, y,
-        vx: (Math.random() - 0.5) * 10,
-        vy: (Math.random() - 0.5) * 10,
-        life: 1,
-        color
-      });
-    }
+  const spawnBoss = () => {
+    bossActive.current = true;
+    audio.playBossSpawn();
+    enemiesRef.current = [{
+      x: CANVAS_WIDTH / 2 - BOSS_SIZE / 2, y: -150, originX: CANVAS_WIDTH / 2 - BOSS_SIZE / 2, originY: 100,
+      width: BOSS_SIZE, height: BOSS_SIZE, alive: true, type: 'BOSS',
+      hp: 20 + level * 5, maxHp: 20 + level * 5, isDiving: false, diveAngle: 0, scoreValue: 5000
+    }];
   };
 
   const gameLoop = () => {
     if (gameState !== 'PLAYING') return;
-
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
 
-    // 震動效果
     ctx.save();
     if (screenShake.current > 0) {
-      ctx.translate((Math.random() - 0.5) * screenShake.current, (Math.random() - 0.5) * screenShake.current);
-      screenShake.current -= 0.5;
+      ctx.translate((Math.random()-0.5)*screenShake.current, (Math.random()-0.5)*screenShake.current);
+      screenShake.current *= 0.9;
     }
 
     updateBackground(ctx);
@@ -171,7 +183,6 @@ const GalagaGame: React.FC = () => {
     updateBullets();
     updatePowerUps();
     updateParticles();
-    
     checkCollisions();
 
     drawPlayer(ctx);
@@ -187,7 +198,6 @@ const GalagaGame: React.FC = () => {
       spawnEnemies(level + 1);
       audio.playPowerUp();
     }
-
     requestAnimationFrame(gameLoop);
   };
 
@@ -197,8 +207,6 @@ const GalagaGame: React.FC = () => {
       return () => cancelAnimationFrame(frame);
     }
   }, [gameState]);
-
-  // --- 更新邏輯 ---
 
   const updateBackground = (ctx: CanvasRenderingContext2D) => {
     ctx.fillStyle = '#000814';
@@ -217,19 +225,15 @@ const GalagaGame: React.FC = () => {
     if (keysRef.current.has('ArrowRight') && playerRef.current.x < CANVAS_WIDTH - PLAYER_SIZE) playerRef.current.x += speed;
 
     const now = Date.now();
-    const fireRate = activePowerUp === 'DOUBLE_SHOT' ? 150 : 300;
-    
-    if (keysRef.current.has('Space') && now - lastShotRef.current > fireRate) {
+    if (keysRef.current.has('Space') && now - lastShotRef.current > (activePowerUp === 'DOUBLE_SHOT' ? 150 : 300)) {
+      const bColor = '#00FFFF';
       if (activePowerUp === 'DOUBLE_SHOT') {
         bulletsRef.current.push(
-          { x: playerRef.current.x + 5, y: playerRef.current.y, width: BULLET_SIZE, height: 12, active: true, fromPlayer: true },
-          { x: playerRef.current.x + PLAYER_SIZE - 10, y: playerRef.current.y, width: BULLET_SIZE, height: 12, active: true, fromPlayer: true }
+          { x: playerRef.current.x + 5, y: playerRef.current.y, width: 4, height: 12, active: true, fromPlayer: true, color: bColor, vx: 0, vy: -10 },
+          { x: playerRef.current.x + PLAYER_SIZE - 10, y: playerRef.current.y, width: 4, height: 12, active: true, fromPlayer: true, color: bColor, vx: 0, vy: -10 }
         );
       } else {
-        bulletsRef.current.push({
-          x: playerRef.current.x + PLAYER_SIZE / 2 - BULLET_SIZE / 2,
-          y: playerRef.current.y, width: BULLET_SIZE, height: 12, active: true, fromPlayer: true
-        });
+        bulletsRef.current.push({ x: playerRef.current.x + PLAYER_SIZE/2 - 2, y: playerRef.current.y, width: 4, height: 12, active: true, fromPlayer: true, color: bColor, vx: 0, vy: -10 });
       }
       audio.playShoot();
       lastShotRef.current = now;
@@ -240,42 +244,39 @@ const GalagaGame: React.FC = () => {
     formationOffset.current += 0.05 * formationDir.current;
     if (Math.abs(formationOffset.current) > 30) formationDir.current *= -1;
 
-    enemiesRef.current.forEach(enemy => {
-      if (!enemy.alive) return;
-
-      if (enemy.isDiving) {
-        // 俯衝邏輯
-        enemy.y += 5;
-        enemy.x += Math.sin(enemy.diveAngle) * 4;
-        enemy.diveAngle += 0.1;
-        if (enemy.y > CANVAS_HEIGHT) {
-          enemy.y = -50;
-          enemy.isDiving = false;
+    enemiesRef.current.forEach(e => {
+      if (!e.alive) return;
+      if (e.type === 'BOSS') {
+        // Boss 移動邏輯
+        if (e.y < e.originY) e.y += 2;
+        e.x = e.originX + Math.sin(Date.now()/1000) * 100;
+        
+        // Boss 彈幕
+        if (Math.random() < 0.05) {
+          const angle = (Math.random() * Math.PI) / 2 + Math.PI / 4;
+          bulletsRef.current.push({
+            x: e.x + e.width/2, y: e.y + e.height - 20, width: 6, height: 6,
+            active: true, fromPlayer: false, color: '#FF00FF',
+            vx: Math.cos(angle) * 5, vy: Math.sin(angle) * 5
+          });
         }
+      } else if (e.isDiving) {
+        e.y += 5; e.x += Math.sin(e.diveAngle) * 4; e.diveAngle += 0.1;
+        if (e.y > CANVAS_HEIGHT) { e.y = -50; e.isDiving = false; }
       } else {
-        enemy.x = enemy.originX + Math.sin(formationOffset.current) * 20;
-        // 隨機俯衝
-        if (enemy.type === 'PURPLE' && Math.random() < 0.001) {
-          enemy.isDiving = true;
-          enemy.diveAngle = 0;
-        }
+        e.x = e.originX + Math.sin(formationOffset.current) * 20;
+        if (e.type === 'PURPLE' && Math.random() < 0.001) { e.isDiving = true; e.diveAngle = 0; }
       }
 
-      // 隨機射擊
-      if (Math.random() < 0.002 + (level * 0.001)) {
-        bulletsRef.current.push({
-          x: enemy.x + enemy.width/2, y: enemy.y + enemy.height,
-          width: BULLET_SIZE, height: 8, active: true, fromPlayer: false
-        });
+      if (Math.random() < 0.002 + (level * 0.001) && e.type !== 'BOSS') {
+        bulletsRef.current.push({ x: e.x + e.width/2, y: e.y + e.height, width: 4, height: 8, active: true, fromPlayer: false, color: '#FF0000', vx: 0, vy: 5 });
       }
     });
   };
 
   const updateBullets = () => {
-    bulletsRef.current.forEach(b => {
-      b.y += b.fromPlayer ? -8 : (4 + level * 0.5);
-    });
-    bulletsRef.current = bulletsRef.current.filter(b => b.y > -20 && b.y < CANVAS_HEIGHT + 20 && b.active);
+    bulletsRef.current.forEach(b => { b.x += b.vx; b.y += b.vy; });
+    bulletsRef.current = bulletsRef.current.filter(b => b.y > -50 && b.y < CANVAS_HEIGHT + 50 && b.x > -50 && b.x < CANVAS_WIDTH + 50 && b.active);
   };
 
   const updatePowerUps = () => {
@@ -284,260 +285,177 @@ const GalagaGame: React.FC = () => {
   };
 
   const updateParticles = () => {
-    particlesRef.current.forEach(p => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.life -= 0.02;
-    });
+    particlesRef.current.forEach(p => { p.x += p.vx; p.y += p.vy; p.life -= 0.02; });
     particlesRef.current = particlesRef.current.filter(p => p.life > 0);
   };
 
   const checkCollisions = () => {
-    // 玩家子彈擊中敵人
     bulletsRef.current.filter(b => b.fromPlayer).forEach(bullet => {
       enemiesRef.current.filter(e => e.alive).forEach(enemy => {
         if (rectIntersect(bullet, enemy)) {
           bullet.active = false;
           enemy.hp--;
+          screenShake.current = enemy.type === 'BOSS' ? 2 : 5;
           if (enemy.hp <= 0) {
             enemy.alive = false;
-            createParticles(enemy.x + enemy.width/2, enemy.y + enemy.height/2, getEnemyColor(enemy.type));
+            createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.type === 'BOSS' ? 30 : 10);
             audio.playExplosion();
-            const newScore = score + enemy.scoreValue;
-            setScore(newScore);
-            if (newScore > highScore) {
-              setHighScore(newScore);
-              localStorage.setItem('galaga-highscore', newScore.toString());
-            }
-            // 掉落道具
-            if (Math.random() < 0.1) spawnPowerUp(enemy.x, enemy.y);
+            setScore(s => {
+              const ns = s + enemy.scoreValue;
+              if (ns > highScore) { setHighScore(ns); localStorage.setItem('galaga-highscore', ns.toString()); }
+              return ns;
+            });
+            if (Math.random() < 0.2 || enemy.type === 'BOSS') spawnPowerUp(enemy.x + enemy.width/2, enemy.y);
           }
         }
       });
     });
 
-    // 敵人或子彈擊中玩家
     const playerBox = { ...playerRef.current, width: PLAYER_SIZE, height: PLAYER_SIZE };
-    
-    bulletsRef.current.filter(b => !b.fromPlayer).forEach(bullet => {
-      if (rectIntersect(bullet, playerBox)) {
-        bullet.active = false;
-        handlePlayerHit();
-      }
-    });
-
-    enemiesRef.current.filter(e => e.alive).forEach(enemy => {
-      if (rectIntersect(enemy, playerBox)) {
-        enemy.alive = false;
-        handlePlayerHit();
-      }
-    });
-
-    // 道具收集
-    powerUpsRef.current.filter(p => p.active).forEach(p => {
-      if (rectIntersect(p, playerBox)) {
-        p.active = false;
-        applyPowerUp(p.type);
-      }
-    });
+    bulletsRef.current.filter(b => !b.fromPlayer).forEach(b => { if (rectIntersect(b, playerBox)) { b.active = false; handlePlayerHit(); } });
+    enemiesRef.current.filter(e => e.alive).forEach(e => { if (rectIntersect(e, playerBox)) { handlePlayerHit(); } });
+    powerUpsRef.current.filter(p => p.active).forEach(p => { if (rectIntersect(p, playerBox)) { p.active = false; applyPowerUp(p.type); } });
   };
 
-  const rectIntersect = (a: Entity, b: Entity) => (
-    a.x < b.x + b.width && a.x + a.width > b.x &&
-    a.y < b.y + b.height && a.y + a.height > b.y
-  );
+  const rectIntersect = (a: any, b: any) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 
   const handlePlayerHit = () => {
-    if (shieldActive) {
-      setShieldActive(false);
-      audio.playPowerUp();
-      return;
-    }
-    screenShake.current = 15;
+    if (shieldActive) { setShieldActive(false); audio.playPowerUp(); return; }
+    screenShake.current = 20;
     setLives(l => {
-      if (l <= 1) {
-        setGameState('GAMEOVER');
-        audio.playGameOver();
-        return 0;
-      }
+      if (l <= 1) { setGameState('GAMEOVER'); audio.playGameOver(); return 0; }
       audio.playExplosion();
       return l - 1;
     });
   };
 
+  const createExplosion = (x: number, y: number, count: number) => {
+    for (let i = 0; i < count; i++) {
+      particlesRef.current.push({
+        x, y, vx: (Math.random()-0.5)*12, vy: (Math.random()-0.5)*12, life: 1, color: `hsl(${Math.random()*60 + 10}, 100%, 50%)`
+      });
+    }
+  };
+
   const spawnPowerUp = (x: number, y: number) => {
     const types: PowerUpType[] = ['DOUBLE_SHOT', 'SHIELD', 'LIFE'];
-    const type = types[Math.floor(Math.random() * types.length)];
-    powerUpsRef.current.push({ x, y, width: POWERUP_SIZE, height: POWERUP_SIZE, type, active: true });
+    const type = types[Math.floor(Math.random()*types.length)];
+    powerUpsRef.current.push({ x, y, width: 20, height: 20, type, active: true });
   };
 
   const applyPowerUp = (type: PowerUpType) => {
     audio.playPowerUp();
     if (type === 'LIFE') setLives(l => Math.min(l + 1, 5));
     else if (type === 'SHIELD') setShieldActive(true);
-    else {
-      setActivePowerUp(type);
-      setTimeout(() => setActivePowerUp(null), 8000);
-    }
+    else { setActivePowerUp(type); setTimeout(() => setActivePowerUp(null), 8000); }
   };
 
-  const getEnemyColor = (type: string) => {
-    if (type === 'YELLOW') return '#FFEB3B';
-    if (type === 'PURPLE') return '#E040FB';
-    return '#FF5252';
+  // --- 像素繪圖輔助 ---
+  const drawPixelArt = (ctx: CanvasRenderingContext2D, data: number[][], x: number, y: number, size: number, color: string) => {
+    const pSize = size / data[0].length;
+    ctx.fillStyle = color;
+    data.forEach((row, i) => {
+      row.forEach((pixel, j) => {
+        if (pixel) ctx.fillRect(x + j * pSize, y + i * pSize, pSize + 0.5, pSize + 0.5);
+      });
+    });
   };
-
-  // --- 繪製邏輯 ---
 
   const drawPlayer = (ctx: CanvasRenderingContext2D) => {
     const { x, y } = playerRef.current;
-    // 戰機主體
-    ctx.fillStyle = '#00D4FF';
-    ctx.beginPath();
-    ctx.moveTo(x + PLAYER_SIZE/2, y);
-    ctx.lineTo(x, y + PLAYER_SIZE);
-    ctx.lineTo(x + PLAYER_SIZE, y + PLAYER_SIZE);
-    ctx.closePath();
-    ctx.fill();
-    
-    // 防護罩
+    drawPixelArt(ctx, PIXEL_DATA.PLAYER, x, y, PLAYER_SIZE, '#00D4FF');
     if (shieldActive) {
-      ctx.strokeStyle = '#00FFFF';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(x + PLAYER_SIZE/2, y + PLAYER_SIZE/2, PLAYER_SIZE/1.2, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 0.2;
-      ctx.fillStyle = '#00FFFF';
-      ctx.fill();
-      ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = '#00FFFF'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.arc(x+PLAYER_SIZE/2, y+PLAYER_SIZE/2, PLAYER_SIZE*0.8, 0, Math.PI*2); ctx.stroke();
     }
   };
 
   const drawEnemies = (ctx: CanvasRenderingContext2D) => {
     enemiesRef.current.forEach(e => {
       if (!e.alive) return;
-      ctx.fillStyle = getEnemyColor(e.type);
-      if (e.isDiving) ctx.shadowBlur = 15, ctx.shadowColor = ctx.fillStyle;
+      let color = '#FF5252';
+      let data = PIXEL_DATA.ENEMY_RED;
+      if (e.type === 'PURPLE') { color = '#E040FB'; data = PIXEL_DATA.ENEMY_PURPLE; }
+      if (e.type === 'YELLOW') color = '#FFEB3B';
+      if (e.type === 'BOSS') { color = '#FF0055'; data = PIXEL_DATA.BOSS; }
       
-      // 繪製更有層次的敵機
-      ctx.fillRect(e.x, e.y, e.width, e.height);
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.fillRect(e.x + 5, e.y + 5, 5, 5);
-      ctx.fillRect(e.x + e.width - 10, e.y + 5, 5, 5);
+      drawPixelArt(ctx, data, e.x, e.y, e.width, color);
       
-      ctx.shadowBlur = 0;
+      // Boss 血條
+      if (e.type === 'BOSS') {
+        ctx.fillStyle = '#333'; ctx.fillRect(e.x, e.y - 20, e.width, 10);
+        ctx.fillStyle = '#FF0055'; ctx.fillRect(e.x, e.y - 20, e.width * (e.hp/e.maxHp), 10);
+      }
     });
   };
 
   const drawBullets = (ctx: CanvasRenderingContext2D) => {
     bulletsRef.current.forEach(b => {
-      ctx.fillStyle = b.fromPlayer ? '#00FFFF' : '#FF0000';
-      ctx.shadowBlur = 5;
-      ctx.shadowColor = ctx.fillStyle;
-      ctx.fillRect(b.x, b.y, b.width, b.height);
-      ctx.shadowBlur = 0;
+      ctx.fillStyle = b.color; ctx.shadowBlur = 8; ctx.shadowColor = b.color;
+      ctx.fillRect(b.x, b.y, b.width, b.height); ctx.shadowBlur = 0;
     });
   };
 
   const drawPowerUps = (ctx: CanvasRenderingContext2D) => {
     powerUpsRef.current.forEach(p => {
-      ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath();
-      ctx.arc(p.x + p.width/2, p.y + p.height/2, p.width/2, 0, Math.PI*2);
-      ctx.fill();
-      ctx.strokeStyle = '#FFD700';
-      ctx.stroke();
+      ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(p.x+10, p.y+10, 10, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = p.type === 'LIFE' ? '#F00' : p.type === 'SHIELD' ? '#00F' : '#FF0';
+      ctx.font = '12px Arial'; ctx.fillText(p.type[0], p.x+6, p.y+15);
     });
   };
 
   const drawParticles = (ctx: CanvasRenderingContext2D) => {
-    particlesRef.current.forEach(p => {
-      ctx.globalAlpha = p.life;
-      ctx.fillStyle = p.color;
-      ctx.fillRect(p.x, p.y, 3, 3);
-    });
+    particlesRef.current.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); });
     ctx.globalAlpha = 1.0;
   };
 
   return (
-    <div className="flex flex-col items-center select-none">
-      {/* HUD */}
+    <div className="flex flex-col items-center select-none scale-90 sm:scale-100">
       <div className="w-[480px] flex justify-between items-end mb-2 text-white font-mono px-2">
-        <div>
-          <div className="text-gray-400 text-xs uppercase tracking-widest">High Score</div>
-          <div className="text-2xl text-yellow-400">{highScore.toLocaleString().padStart(6, '0')}</div>
-        </div>
-        <div className="text-center">
-          <div className="text-gray-400 text-xs uppercase tracking-widest">Level</div>
-          <div className="text-xl text-blue-400 font-bold">{level}</div>
-        </div>
-        <div className="text-right">
-          <div className="text-gray-400 text-xs uppercase tracking-widest">Score</div>
-          <div className="text-2xl text-white">{score.toLocaleString().padStart(6, '0')}</div>
-        </div>
+        <div><div className="text-gray-400 text-[10px] uppercase">High Score</div><div className="text-xl text-yellow-400">{highScore.toLocaleString()}</div></div>
+        <div className="text-center">{bossActive.current ? <Skull className="text-red-500 animate-pulse" /> : <div className="text-blue-400 font-bold italic">LVL {level}</div>}</div>
+        <div className="text-right"><div className="text-gray-400 text-[10px] uppercase">Score</div><div className="text-xl text-white">{score.toLocaleString()}</div></div>
       </div>
 
-      <div className="relative rounded-xl overflow-hidden shadow-2xl border-4 border-gray-800 bg-black">
+      <div className="relative rounded-lg overflow-hidden shadow-[0_0_50px_rgba(0,100,255,0.3)] border-4 border-gray-900 bg-black">
         <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />
-
-        {/* 狀態列 */}
-        <div className="absolute bottom-4 left-4 flex gap-2">
-          {[...Array(5)].map((_, i) => (
-            <Heart key={i} className={`w-5 h-5 transition-all ${i < lives ? 'text-red-500 fill-red-500 scale-110' : 'text-gray-800 scale-90'}`} />
-          ))}
+        
+        <div className="absolute bottom-4 left-4 flex gap-1">
+          {[...Array(lives)].map((_, i) => <Heart key={i} size={16} className="text-red-500 fill-red-500 animate-pulse" />)}
         </div>
 
-        {/* 道具指示器 */}
-        <div className="absolute bottom-4 right-4 flex gap-3">
-          {activePowerUp === 'DOUBLE_SHOT' && <Zap className="text-yellow-400 animate-pulse" />}
-          {shieldActive && <Shield className="text-blue-400 animate-pulse" />}
+        <div className="absolute bottom-4 right-4 flex gap-2">
+          {activePowerUp && <Zap size={20} className="text-yellow-400" />}
+          {shieldActive && <Shield size={20} className="text-blue-400" />}
         </div>
 
-        {/* 遊戲覆蓋層 */}
         {gameState === 'START' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 backdrop-blur-md">
-            <div className="mb-4 flex gap-4">
-              <div className="w-8 h-8 bg-[#FF5252] animate-bounce" />
-              <div className="w-8 h-8 bg-[#E040FB] animate-bounce delay-75" />
-              <div className="w-8 h-8 bg-[#FFEB3B] animate-bounce delay-150" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95">
+            <div className="grid grid-cols-4 gap-2 mb-8">
+              {PIXEL_DATA.PLAYER.slice(2,6).map((row, i) => row.map((p, j) => <div key={`${i}-${j}`} className={`w-3 h-3 ${p ? 'bg-blue-400' : 'bg-transparent'}`} />))}
             </div>
-            <h1 className="text-6xl font-black text-white mb-2 italic tracking-tighter">BEES</h1>
-            <p className="text-blue-500 font-bold tracking-[0.3em] mb-12">GALACTIC DEFENSE</p>
-            <button onClick={initGame} className="px-12 py-4 bg-blue-600 text-white rounded-full font-black hover:bg-blue-500 transition-all active:scale-95 shadow-lg shadow-blue-500/50">
-              LAUNCH MISSION
+            <h1 className="text-7xl font-black text-white italic tracking-tighter mb-2">BEES</h1>
+            <div className="h-1 w-48 bg-blue-600 mb-8" />
+            <button onClick={initGame} className="group relative px-12 py-4 bg-white text-black font-black text-xl hover:bg-blue-500 hover:text-white transition-all transform hover:scale-110">
+              <span className="relative z-10">START MISSION</span>
+              <div className="absolute inset-0 bg-blue-400 scale-0 group-hover:scale-105 transition-transform -z-0 opacity-50" />
             </button>
           </div>
         )}
 
         {gameState === 'GAMEOVER' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md">
-            <h2 className="text-6xl font-black text-white mb-4">MISSION FAILED</h2>
-            <div className="text-center mb-12">
-              <p className="text-red-400 uppercase tracking-widest text-sm mb-1">Final Score</p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/95 backdrop-blur-md">
+            <h2 className="text-6xl font-black text-white mb-2">CRASHED</h2>
+            <p className="text-red-400 tracking-widest mb-12 uppercase text-sm font-bold">The galaxy is lost</p>
+            <div className="bg-black/50 p-6 rounded-lg border border-red-500/30 mb-12 text-center w-64">
+              <p className="text-gray-400 text-xs">FINAL SCORE</p>
               <p className="text-4xl text-white font-mono">{score.toLocaleString()}</p>
             </div>
-            <button onClick={initGame} className="flex items-center gap-3 px-10 py-4 bg-white text-red-600 rounded-full font-black hover:bg-gray-100 transition-all">
-              <RotateCcw /> TRY AGAIN
+            <button onClick={initGame} className="px-10 py-4 bg-white text-red-600 rounded-full font-black hover:bg-red-500 hover:text-white transition-all">
+              REDEPLOY
             </button>
           </div>
         )}
-      </div>
-
-      {/* 操作提示 */}
-      <div className="mt-6 grid grid-cols-3 gap-8 text-gray-500 font-mono text-[10px] uppercase tracking-tighter">
-        <div className="flex flex-col items-center gap-2">
-          <div className="flex gap-1"><div className="px-2 py-1 border border-gray-700 rounded">←</div><div className="px-2 py-1 border border-gray-700 rounded">→</div></div>
-          MOVE SHIP
-        </div>
-        <div className="flex flex-col items-center gap-2">
-          <div className="px-6 py-1 border border-gray-700 rounded text-center">SPACE</div>
-          FIRE LASER
-        </div>
-        <div className="flex flex-col items-center gap-2 text-yellow-500/50">
-          <div className="flex gap-2"><Zap size={14}/><Shield size={14}/><PlusCircle size={14}/></div>
-          POWER UPS
-        </div>
       </div>
     </div>
   );
