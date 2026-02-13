@@ -1,7 +1,6 @@
 class AudioManager {
   private ctx: AudioContext | null = null;
-  private bgmOsc: OscillatorNode | null = null;
-  private bgmGain: GainNode | null = null;
+  private bgmInterval: any = null;
 
   private init() {
     if (!this.ctx) {
@@ -25,10 +24,9 @@ class AudioManager {
   playBGM() {
     this.stopBGM();
     this.init();
-    const now = this.ctx!.currentTime;
     
-    // 簡單的 8-bit 循環節奏
     const playNote = (time: number, freq: number) => {
+      if (!this.ctx) return;
       const { osc, gain } = this.createOscillator(freq, 'triangle');
       gain.gain.setValueAtTime(0.05, time);
       gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
@@ -37,7 +35,8 @@ class AudioManager {
     };
 
     const loop = () => {
-      const startTime = this.ctx!.currentTime + 0.1;
+      if (this.ctx?.state !== 'running') return;
+      const startTime = this.ctx.currentTime + 0.1;
       const notes = [110, 110, 164, 110, 130, 110, 164, 146];
       notes.forEach((freq, i) => {
         playNote(startTime + i * 0.5, freq);
@@ -45,14 +44,14 @@ class AudioManager {
     };
 
     loop();
-    const interval = setInterval(() => {
-      if (this.ctx?.state === 'running') loop();
-      else clearInterval(interval);
-    }, 4000);
+    this.bgmInterval = setInterval(loop, 4000);
   }
 
   stopBGM() {
-    // 簡單處理，實際會需要儲存 interval ID
+    if (this.bgmInterval) {
+      clearInterval(this.bgmInterval);
+      this.bgmInterval = null;
+    }
   }
 
   playShoot() {
