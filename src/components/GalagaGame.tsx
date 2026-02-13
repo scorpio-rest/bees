@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Trophy, Heart, Play, RotateCcw } from 'lucide-react';
+import { audio } from '../utils/audio';
 
 // --- 常數定義 ---
 const CANVAS_WIDTH = 480;
@@ -124,6 +125,7 @@ const GalagaGame: React.FC = () => {
     if (enemiesRef.current.every(e => !e.alive)) {
       setLevel(prev => prev + 1);
       spawnEnemies(level + 1);
+      audio.playPowerUp();
     }
 
     requestAnimationFrame(gameLoop);
@@ -171,6 +173,7 @@ const GalagaGame: React.FC = () => {
         height: 12,
         active: true
       });
+      audio.playShoot();
       lastShotRef.current = now;
     }
   };
@@ -232,6 +235,7 @@ const GalagaGame: React.FC = () => {
             bullet.y + bullet.height > enemy.y) {
           enemy.alive = false;
           bullet.active = false;
+          audio.playExplosion();
           setScore(s => s + (enemy.type * 100));
         }
       });
@@ -252,9 +256,11 @@ const GalagaGame: React.FC = () => {
   const handlePlayerHit = () => {
     setLives(l => {
       if (l <= 1) {
+        audio.playGameOver();
         setGameState('GAMEOVER');
         return 0;
       }
+      audio.playExplosion();
       return l - 1;
     });
   };
